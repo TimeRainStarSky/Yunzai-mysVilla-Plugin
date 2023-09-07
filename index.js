@@ -15,7 +15,6 @@ const adapter = new class mysVillaAdapter {
   }
 
   async sendApi(id, action, villa_id, data) {
-    console.log(action, data)
     const opts = {
       headers: {
         "x-rpc-bot_id": id.replace(/^mv_/, ""),
@@ -36,7 +35,6 @@ const adapter = new class mysVillaAdapter {
     } catch (err) {
       logger.error(`请求 API 错误：${logger.red(err)}`)
     }
-    console.log(res)
     return res
   }
 
@@ -73,34 +71,7 @@ const adapter = new class mysVillaAdapter {
     }
     return file
   }
-/*
-  async makeBuffer(file) {
-    if (file.match(/^base64:\/\//))
-      return Buffer.from(file.replace(/^base64:\/\//, ""), "base64")
-    else if (file.match(/^https?:\/\//))
-      return Buffer.from(await (await fetch(file)).arrayBuffer())
-    return file
-  }
 
-  async uploadFile(file) {
-    file = await this.makeBuffer(file)
-    const formdata = new FormData()
-    formdata.set("file", new File([file], Date.now()))
-
-    let res
-    try {
-      res = await fetch("http://image.mihomo.me/uploadfile", {
-        method: "POST",
-        body: formdata,
-      })
-      res = await res.json()
-      if (res.url) return res.url
-    } catch (err) {
-      logger.error(`上传图片错误：${logger.red(err)}`)
-    }
-    return this.uploadFS(file)
-  }
-*/
   async makeMsg(data, msg) {
     if (!Array.isArray(msg))
       msg = [msg]
@@ -368,7 +339,6 @@ const adapter = new class mysVillaAdapter {
   }
 
   makeWebHook(req) {
-    console.log(JSON.stringify(req.body))
     logger.mark(`${logger.blue(`[${req.ip} => ${req.url}]`)} HTTP ${req.method} 请求：${JSON.stringify(req.headers)}`)
 
     const data = req.body.event
@@ -465,7 +435,7 @@ export class mysVilla extends plugin {
           permission: config.permission,
         },
         {
-          reg: "^#(米游社大别野|mysVilla)设置[01]:[01]:[0-9]+:.+$",
+          reg: "^#(米游社大别野|mysVilla)设置.+:.+:-----BEGIN PUBLIC KEY----- .+ .+ .+ .+ -----END PUBLIC KEY-----$",
           fnc: "Token",
           permission: config.permission,
         },
