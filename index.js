@@ -1,7 +1,7 @@
 logger.info(logger.yellow("- 正在加载 米游社大别野 适配器插件"))
 
 import { config, configSave } from "./Model/config.js"
-import fetch, { FormData, File } from "node-fetch"
+import fetch from "node-fetch"
 import common from "../../lib/common/common.js"
 import imageSize from "image-size"
 import bodyParser from "body-parser"
@@ -49,7 +49,7 @@ const adapter = new class mysVillaAdapter {
     setTimeout(() => delete this.fs[name], 60000)
 
     return {
-      url: `${config.url}/mysVilla/${name}`,
+      url: `${config.url}/${this.id}/${name}`,
       size,
       file_size: file.length,
     }
@@ -57,6 +57,7 @@ const adapter = new class mysVillaAdapter {
 
   async uploadImage(data, file) {
     file = await this.uploadFS(file)
+    logger.info(`${logger.blue(`[${data.self_id}]`)} 上传图片：[${data.villa_id}-${data.room_id}] ${JSON.stringify(file)}`)
     for (let i = 0; i < 5; i++) try {
       const res = await data.bot.sendApi("transferImage", data.villa_id, {
         url: file.url,
@@ -137,11 +138,13 @@ const adapter = new class mysVillaAdapter {
       }
     }
 
-    if (content.images.length == 1) {
-      object_name = "MHY:Image"
-      content = content.images[0]
-    } else if (!content.text) {
-      content.text = " "
+    if (!content.text) {
+      if (content.images.length == 1) {
+        object_name = "MHY:Image"
+        content = content.images[0]
+      } else {
+        content.text = " "
+      }
     }
 
     return {
@@ -406,7 +409,7 @@ const adapter = new class mysVillaAdapter {
   }
 
   makeFileServer(req) {
-    const file = this.fs[req.url.replace(/^\/mysVilla\//, "")]
+    const file = this.fs[req.url.replace(new RegExp(`^/${this.id}/`), "")]
     if (!file) return req.next()
     logger.mark(`${logger.blue(`[${req.ip} => ${req.url}]`)} HTTP ${req.method} 请求：${JSON.stringify(req.headers)}`)
     req.res.send(file)
@@ -415,8 +418,8 @@ const adapter = new class mysVillaAdapter {
   async load() {
     for (const token of config.token)
       await adapter.connect(token)
-    Bot.express.post("/mysVilla", bodyParser.json(), req => this.makeWebHook(req))
-    Bot.express.get("/mysVilla/*", req => this.makeFileServer(req))
+    Bot.express.post(`/${this.id}`, bodyParser.json(), req => this.makeWebHook(req))
+    Bot.express.get(`/${this.id}/*`, req => this.makeFileServer(req))
   }
 }
 
