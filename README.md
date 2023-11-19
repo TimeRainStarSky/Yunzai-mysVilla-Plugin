@@ -21,14 +21,13 @@ TRSS-Yunzai 米游社大别野 Bot 适配器 插件
 ① 立即创建  
 ② 开发配置 → 得到：`bot_id:secret:pub_key(换行改为空格)`  
 4. 输入：`#米游社大别野设置bot_id:secret:pub_key`
-5. 开放平台回调地址填写：`http://host:port/mysVilla`
-6. 输入：`#米游社大别野回调http://host:port`
+5. 公网地址填入 `config/config/bot.yaml:url`
+6. 开放平台回调地址填写：`url/mysVilla`
 
 ## 使用教程
 
 - #米游社大别野账号
 - #米游社大别野设置 + `bot_id:secret:pub_key`
-- #米游社大别野回调 + `http://host:port`
 
 - 注意：
-1. 需要公网IP，公网访问 `http://host:port`，后台日志显示请求，即为可用
+1. 需要公网地址，使用浏览器打开 url，后台日志应显示访问请求

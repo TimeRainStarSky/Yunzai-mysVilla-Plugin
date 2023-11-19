@@ -11,7 +11,6 @@ const adapter = new class mysVillaAdapter {
   constructor() {
     this.id = "mysVilla"
     this.name = "米游社大别野Bot"
-    this.fs = {}
   }
 
   async sendApi(id, action, villa_id, data) {
@@ -38,30 +37,23 @@ const adapter = new class mysVillaAdapter {
     return res
   }
 
-  async uploadFS(file) {
-    if (!file.match(/^base64:\/\//))
-      return { url: file }
-
-    file = Buffer.from(file.replace(/^base64:\/\//, ""), "base64")
-    const size = imageSize(file)
-    const name = `${Date.now()}.${size.type}`
-    this.fs[name] = file
-    setTimeout(() => delete this.fs[name], 60000)
-
-    return {
-      url: `${config.url}/${this.id}/${name}`,
-      size,
-      file_size: file.length,
-    }
-  }
-
   async uploadImage(data, file) {
-    file = await this.uploadFS(file)
-    logger.info(`${logger.blue(`[${data.self_id}]`)} 上传图片：[${data.villa_id}-${data.room_id}] ${JSON.stringify(file)}`)
+    file = Bot.Buffer(file)
+    if (Buffer.isBuffer(file)) {
+      const size = imageSize(file)
+      file = {
+        url: await Bot.fileToUrl(file, `${Date.now()}.${size.type}`),
+        size,
+        file_size: file.length,
+      }
+    } else {
+      file = { url: file }
+    }
+
+    Bot.makeLog("info", `上传图片：[${data.villa_id}-${data.room_id}] ${JSON.stringify(file)}`, data.self_id)
     for (let i = 0; i < 5; i++) try {
-      const res = await data.bot.sendApi("transferImage", data.villa_id, {
-        url: file.url,
-      })
+      const res = await data.bot.sendApi("transferImage",
+        data.villa_id, { url: file.url })
       if (res?.data?.new_url) {
         file.url = res.data.new_url
         break
@@ -162,7 +154,7 @@ const adapter = new class mysVillaAdapter {
       return Bot.sendForwardMsg(msg => this.sendMsg(data, msg), msg.data)
 
     const { object_name, msg_content } = await this.makeMsg(data, msg)
-    logger.info(`${logger.blue(`[${data.self_id}]`)} 发送消息：[${data.villa_id}-${data.room_id}] ${object_name} ${msg_content}`)
+    Bot.makeLog("info", `发送消息：[${data.villa_id}-${data.room_id}] ${object_name} ${msg_content}`, data.self_id)
     const res = await data.bot.sendApi("sendMessage", data.villa_id, {
       room_id: data.room_id,
       object_name,
@@ -175,7 +167,7 @@ const adapter = new class mysVillaAdapter {
   }
 
   recallMsg(data, message_id) {
-    logger.info(`${logger.blue(`[${data.self_id}]`)} 撤回消息：[${data.villa_id}-${data.room_id}] ${message_id}`)
+    Bot.makeLog("info", `撤回消息：[${data.villa_id}-${data.room_id}] ${message_id}`, data.self_id)
     let msg_uid = message_id.split("-")
     const msg_time = Number(msg_uid.shift())
     msg_uid = msg_uid.join("-")
@@ -336,7 +328,7 @@ const adapter = new class mysVillaAdapter {
     data.message_type = "group"
     data.group_id = `mv_${data.event.villa_id}-${data.event.room_id}`
     data.bot.gl.set(data.group_id, { group_id: data.group_id })
-    logger.info(`${logger.blue(`[${data.self_id}]`)} 群消息：[${data.group_name}(${data.group_id}), ${data.sender.nickname}(${data.user_id})] ${data.raw_message}`)
+    Bot.makeLog("info", `群消息：[${data.group_name}(${data.group_id}), ${data.sender.nickname}(${data.user_id})] ${data.raw_message}`, data.self_id)
 
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
@@ -408,18 +400,10 @@ const adapter = new class mysVillaAdapter {
     return true
   }
 
-  makeFileServer(req) {
-    const file = this.fs[req.url.replace(new RegExp(`^/${this.id}/`), "")]
-    if (!file) return req.next()
-    logger.mark(`${logger.blue(`[${req.ip} => ${req.url}]`)} HTTP ${req.method} 请求：${JSON.stringify(req.headers)}`)
-    req.res.send(file)
-  }
-
   async load() {
     for (const token of config.token)
       await adapter.connect(token)
     Bot.express.post(`/${this.id}`, bodyParser.json(), req => this.makeWebHook(req))
-    Bot.express.get(`/${this.id}/*`, req => this.makeFileServer(req))
   }
 }
 

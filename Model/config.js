@@ -8,7 +8,6 @@ const configSave = config => fs.writeFileSync(configFile, YAML.stringify({ ...co
 const config = {
   tips: "",
   permission: "master",
-  url: "http://localhost:2536",
   token: []
 }
 
