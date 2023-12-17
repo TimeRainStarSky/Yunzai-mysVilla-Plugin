@@ -275,7 +275,12 @@ const adapter = new class mysVillaAdapter {
   }
 
   recallMsg(data, message_id) {
-    Bot.makeLog("info", [`撤回消息：[${data.villa_id}-${data.room_id}]`, message_id], data.self_id)
+    if (data.bot.botMsgId[message_id]) {
+      Bot.makeLog("info", [`撤回机器人消息：[${data.villa_id}-${data.room_id}]`, message_id, data.bot.botMsgId[message_id]], data.self_id)
+      message_id = data.bot.botMsgId[message_id]
+    } else {
+      Bot.makeLog("info", [`撤回消息：[${data.villa_id}-${data.room_id}]`, message_id], data.self_id)
+    }
     let msg_uid = message_id.split("-")
     const msg_time = Number(msg_uid.shift())
     msg_uid = msg_uid.join("-")
@@ -329,14 +334,16 @@ const adapter = new class mysVillaAdapter {
   }
 
   pickMember(id, group_id, user_id) {
-    const guild_id = group_id.replace(/^mv_/, "").split("-")
+    const gid = group_id.replace(/^mv_/, "")
+    const guild_id = gid.split("-")
     const i = {
       ...Bot[id].fl.get(user_id),
       self_id: id,
       bot: Bot[id],
+      user_id: user_id.replace(/^mv_/, ""),
       villa_id: guild_id[0],
       room_id: guild_id[1],
-      user_id: user_id.replace(/^mv_/, ""),
+      group_id: gid,
     }
     return {
       ...this.pickFriend(id, user_id),
@@ -346,13 +353,15 @@ const adapter = new class mysVillaAdapter {
   }
 
   pickGroup(id, group_id) {
-    const guild_id = group_id.replace(/^mv_/, "").split("-")
+    const gid = group_id.replace(/^mv_/, "")
+    const guild_id = gid.split("-")
     const i = {
       ...Bot[id].gl.get(group_id),
       self_id: id,
       bot: Bot[id],
       villa_id: guild_id[0],
       room_id: guild_id[1],
+      group_id: gid,
     }
     return {
       ...i,
@@ -380,6 +389,7 @@ const adapter = new class mysVillaAdapter {
       post_type: "message",
       message_type: "group",
       get user_id() { return this.sender.user_id },
+      get nickname() { return this.sender.nickname },
       sender: {
         user_id: `mv_${event.fromUserId}`,
         nickname: event.nickname,
@@ -394,9 +404,13 @@ const adapter = new class mysVillaAdapter {
     data.bot.fl.set(data.user_id, { ...event.user, ...data.sender })
 
     if (event.quoteMsg?.msgUid) {
-      const id = `${event.quoteMsg.sendAt}-${event.quoteMsg.msgUid}`
-      data.message.push({ type: "reply", id })
-      data.raw_message += `[回复：${id}]`
+      let msg_id = `${event.quoteMsg.sendAt}-${event.quoteMsg.msgUid}`
+      if (event.quoteMsg.botMsgId) {
+        Bot[id].botMsgId[event.quoteMsg.botMsgId] = msg_id
+        msg_id = event.quoteMsg.botMsgId
+      }
+      data.message.push({ type: "reply", id: msg_id })
+      data.raw_message += `[回复：${msg_id}]`
     }
 
     let start = 0
@@ -459,9 +473,13 @@ const adapter = new class mysVillaAdapter {
       post_type: "message",
       message_type: "group",
       get user_id() { return this.sender.user_id },
-      sender: { user_id: `mv_${event.uid}` },
+      get nickname() { return this.sender.nickname },
+      sender: {
+        ...Bot[id].fl.get(`mv_${event.uid}`),
+        user_id: `mv_${event.uid}`,
+      },
       group_id: `mv_${event.villaId}-${event.roomId}`,
-      message_id: `${event.sendAt}-${event.msgUid}`,
+      message_id: `${data.sendAt}-${event.msgUid}`,
 
       message: [
         { type: "reply", id: event.botMsgId },
@@ -469,7 +487,9 @@ const adapter = new class mysVillaAdapter {
       ],
       raw_message: `[回复：${event.botMsgId}]${event.extra}`,
     }
-    Bot.makeLog("info", [`点击消息组件回调：${data.group_id}, ${data.user_id}]`, data.raw_message], data.self_id)
+    Bot[id].botMsgId[event.botMsgId] = data.message_id
+
+    Bot.makeLog("info", [`点击消息组件回调：${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
 
@@ -670,6 +690,8 @@ const adapter = new class mysVillaAdapter {
 
       pickMember: (group_id, user_id) => this.pickMember(id, group_id, user_id),
       pickGroup: group_id => this.pickGroup(id, group_id),
+
+      botMsgId: {},
 
       fl: new Map,
       gl: new Map,
