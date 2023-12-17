@@ -4,7 +4,7 @@ import { config, configSave } from "./Model/config.js"
 import fetch, { FormData, File } from "node-fetch"
 import imageSize from "image-size"
 import bodyParser from "body-parser"
-import { createHmac } from "node:crypto"
+import { createHmac, randomUUID } from "node:crypto"
 import WebSocket from "ws"
 import protobuf from "protobufjs"
 import md5 from "md5"
@@ -111,17 +111,77 @@ const adapter = new class mysVillaAdapter {
     return ret
   }
 
+  makeButton(button, small, mid, big) {
+    const msg = {
+      id: randomUUID(),
+      text: button.text,
+      type: 1,
+      ...button.mysVilla,
+    }
+
+    if (button.input) {
+      msg.c_type = 2
+      msg.input = button.input
+      if (button.send) {
+        msg.need_callback = true
+        msg.extra = button.input
+      }
+    } else if (button.callback) {
+      msg.c_type = 1
+      msg.extra = button.callback
+    } else if (button.link) {
+      msg.c_type = 3
+      msg.link = button.link
+    } else return false
+
+    const buffer = Buffer.from(msg.text)
+    if (buffer.length <= 6) {
+      if (!small.length || small[small.length-1].length == 3)
+        small.push([msg])
+      else
+        small[small.length-1].push(msg)
+    } else if (buffer.length <= 12) {
+      if (!mid.length || mid[mid.length-1].length == 2)
+        mid.push([msg])
+      else
+        mid[mid.length-1].push(msg)
+    } else if (buffer.length <= 30) {
+      big.push([msg])
+    } else {
+      msg.text = buffer.slice(0, 30).toString().replace(/�$/, "")
+      big.push([msg])
+    }
+  }
+
+  makeButtons(button_square) {
+    const small = []
+    const mid = []
+    const big = []
+
+    for (const button_row of button_square)
+      for (let button of button_row)
+        this.makeButton(button, small, mid, big)
+
+    return {
+      template_id: 0,
+      small_component_group_list: small,
+      mid_component_group_list: mid,
+      big_component_group_list: big,
+    }
+  }
+
   async makeMsg(data, msg) {
     if (!Array.isArray(msg))
       msg = [msg]
     let object_name = "MHY:Text"
-    let content = {
-      text: "",
-      entities: [],
-      images: [],
+    const msg_content = {
+      content: {
+        text: "",
+        entities: [],
+        images: [],
+        badge: config.badge[data.self_id],
+      },
     }
-    let mentionedInfo
-    let quote
 
     for (let i of msg) {
       if (typeof i != "object")
@@ -129,16 +189,16 @@ const adapter = new class mysVillaAdapter {
 
       switch (i.type) {
         case "text":
-          content.text += i.text
+          msg_content.content.text += i.text
           break
         case "image":
-          content.images.push(await this.uploadImage(data, i.file))
+          msg_content.content.images.push(await this.uploadImage(data, i.file))
           break
         case "reply": {
           let msg_uid = i.id.split("-")
           const msg_time = Number(msg_uid.shift())
           msg_uid = msg_uid.join("-")
-          quote = {
+          msg_content.quote = {
             original_message_id: msg_uid,
             original_message_send_time: msg_time,
             quoted_message_id: msg_uid,
@@ -148,14 +208,14 @@ const adapter = new class mysVillaAdapter {
         } case "at": {
           const entity = {}
           if (i.qq == "all") {
-            mentionedInfo = { type: 1 }
+            msg_content.mentionedInfo = { type: 1 }
             entity.type = "mention_all"
           } else {
             const user_id = i.qq.replace(/^mv_/, "")
-            if (Array.isArray(mentionedInfo?.userIdList)) {
-              mentionedInfo.userIdList.push(user_id)
+            if (Array.isArray(msg_content.mentionedInfo?.userIdList)) {
+              msg_content.mentionedInfo.userIdList.push(user_id)
             } else {
-              mentionedInfo = { type: 2, userIdList: [user_id] }
+              msg_content.mentionedInfo = { type: 2, userIdList: [user_id] }
             }
             entity.type = "mentioned_user"
             entity.user_id = user_id
@@ -163,35 +223,37 @@ const adapter = new class mysVillaAdapter {
 
           const member = data.bot.pickMember(data.group_id, i.qq)
           const text = `@${member.nickname || (await member.getInfo()).nickname} `
-          content.entities.push({
+          msg_content.content.entities.push({
             entity,
             length: text.length,
-            offset: content.text.length,
+            offset: msg_content.content.text.length,
           })
-          content.text += text
+          msg_content.content.text += text
           break
-        } default:
+        } case "button":
+          msg_content.panel = this.makeButtons(i.data)
+          break
+        case "badge":
+          msg_content.content.badge = i.data
+          break
+        default:
           i = JSON.stringify(i)
-          content.text += i
+          msg_content.content.text += i
       }
     }
 
-    if (!content.text) {
-      if (content.images.length == 1) {
+    if (!msg_content.content.text) {
+      if (!msg_content.quote && !msg_content.panel && msg_content.content.images.length == 1) {
         object_name = "MHY:Image"
-        content = content.images[0]
+        msg_content.content = msg_content.content.images[0]
       } else {
-        content.text = " "
+        msg_content.content.text = "　"
       }
     }
 
     return {
       object_name,
-      msg_content: JSON.stringify({
-        content,
-        mentionedInfo,
-        quote,
-      }),
+      msg_content: JSON.stringify(msg_content),
     }
   }
 
@@ -208,7 +270,7 @@ const adapter = new class mysVillaAdapter {
     })
     return {
       data: res,
-      message_id: `${Date.now()}-${res?.data?.bot_msg_id}`,
+      message_id: res?.data?.bot_msg_id,
     }
   }
 
@@ -334,7 +396,7 @@ const adapter = new class mysVillaAdapter {
     if (event.quoteMsg?.msgUid) {
       const id = `${event.quoteMsg.sendAt}-${event.quoteMsg.msgUid}`
       data.message.push({ type: "reply", id })
-      data.raw_message += `[回复：${id})]`
+      data.raw_message += `[回复：${id}]`
     }
 
     let start = 0
@@ -385,6 +447,32 @@ const adapter = new class mysVillaAdapter {
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
 
+  makeClickMsg(id, data) {
+    Bot.makeLog("debug", ["点击消息组件回调", data], data.self_id)
+    const event = data.extendData.clickMsgComponent
+    data = {
+      bot: Bot[id],
+      self_id: id,
+      raw: data,
+      event,
+
+      post_type: "message",
+      message_type: "group",
+      get user_id() { return this.sender.user_id },
+      sender: { user_id: `mv_${event.uid}` },
+      group_id: `mv_${event.villaId}-${event.roomId}`,
+      message_id: `${event.sendAt}-${event.msgUid}`,
+
+      message: [
+        { type: "reply", id: event.botMsgId },
+        { type: "text", text: event.extra },
+      ],
+      raw_message: `[回复：${event.botMsgId}]${event.extra}`,
+    }
+    Bot.makeLog("info", [`点击消息组件回调：${data.group_id}, ${data.user_id}]`, data.raw_message], data.self_id)
+    Bot.em(`${data.post_type}.${data.message_type}`, data)
+  }
+
   makeEvent(id, data) {
     if (!data?.robot?.template?.id) return false
     if (!id) id = `mv_${data.robot.template.id}`
@@ -403,6 +491,9 @@ const adapter = new class mysVillaAdapter {
       case 5:
         break
       case 6:
+        break
+      case 7:
+        this.makeClickMsg(id, data)
         break
       default:
         Bot.makeLog("warn", ["未知消息", logger.magenta(JSON.stringify(data))], data.self_id)

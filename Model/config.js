@@ -1,4 +1,4 @@
-import fs from "fs"
+import fs from "node:fs"
 import YAML from "yaml"
 import _ from "lodash"
 
@@ -8,6 +8,7 @@ const configSave = config => fs.writeFileSync(configFile, YAML.stringify({ ...co
 const config = {
   tips: "",
   permission: "master",
+  badge: {},
   token: []
 }
 
