@@ -1,16 +1,32 @@
-logger.info(logger.yellow("- 正在加载 米游社大别野 适配器插件"))
+Bot.makeLog("info", logger.yellow("- 正在加载 米游社大别野 适配器插件"))
 
 import { config, configSave } from "./Model/config.js"
-import fetch from "node-fetch"
-import common from "../../lib/common/common.js"
+import fetch, { FormData, File } from "node-fetch"
 import imageSize from "image-size"
 import bodyParser from "body-parser"
 import { createHmac } from "node:crypto"
+import WebSocket from "ws"
+import protobuf from "protobufjs"
+import md5 from "md5"
 
 const adapter = new class mysVillaAdapter {
   constructor() {
     this.id = "mysVilla"
     this.name = "米游社大别野Bot"
+
+    this.wsProto = {}
+    this.wsProtoFile = {
+      command: ["PHeartBeat", "PHeartBeatReply", "PLogin", "PLoginReply", "PLogout", "PLogoutReply", "CommonReply", "PKickOff"],
+      model: ["RobotTemplate", "Robot", "QuoteMessageInfo", "RobotEvent"],
+      robot_event_message: ["RobotEventMessage"],
+    }
+
+    for (const file in this.wsProtoFile)
+      protobuf.load(`plugins/mysVilla-Plugin/Model/proto/${file}.proto`, (err, data) => {
+        if (err) throw err
+        for (const i of this.wsProtoFile[file])
+          this.wsProto[i] = data.lookupType(`vila_bot.${i}`)
+      })
   }
 
   async sendApi(id, action, villa_id, data) {
@@ -26,43 +42,73 @@ const adapter = new class mysVillaAdapter {
       opts.method = "POST"
       opts.body = JSON.stringify(data)
     }
+    Bot.makeLog("debug", ["请求 API", action, JSON.stringify(opts)], id)
 
     let res
     try {
       res = await fetch(`https://bbs-api.miyoushe.com/vila/api/bot/platform/${action}`, opts)
       res = await res.json()
     } catch (err) {
-      logger.error(`请求 API 错误：${logger.red(err)}`)
+      Bot.makeLog("error", ["请求 API 错误", logger.red(err)], id)
     }
+    Bot.makeLog("debug", ["请求 API", action, "返回", JSON.stringify(res)], id)
     return res
   }
 
-  async uploadImage(data, file) {
-    file = Bot.Buffer(file)
-    if (Buffer.isBuffer(file)) {
-      const size = imageSize(file)
-      file = {
-        url: await Bot.fileToUrl(file, `${Date.now()}.${size.type}`),
-        size,
-        file_size: file.length,
-      }
-    } else {
-      file = { url: file }
-    }
-
-    Bot.makeLog("info", `上传图片：[${data.villa_id}-${data.room_id}] ${JSON.stringify(file)}`, data.self_id)
+  async uploadURLImage(data, url) {
+    Bot.makeLog("info", [`上传图片：[${data.villa_id}-${data.room_id}]`, url], data.self_id)
     for (let i = 0; i < 5; i++) try {
       const res = await data.bot.sendApi("transferImage",
-        data.villa_id, { url: file.url })
-      if (res?.data?.new_url) {
-        file.url = res.data.new_url
+        data.villa_id, { url })
+      if (res?.data?.new_url)
+        return res.data.new_url
+
+      Bot.makeLog("error", ["上传图片错误", res], data.self_id)
+      await Bot.sleep(3000)
+    } catch (err) {
+      Bot.makeLog("error", ["上传图片错误", err], data.self_id)
+    }
+    return url
+  }
+
+  async uploadImage(data, file) {
+    file = await Bot.Buffer(file)
+    if (!Buffer.isBuffer(file))
+      return { url: await this.uploadURLImage(data, file) }
+
+    const size = imageSize(file)
+    const ret = { size, file_size: file.length }
+    for (let i = 0; i < 5; i++) try {
+      const res = await data.bot.sendApi(`getUploadImageParams?md5=${md5(file)}&ext=${size.type}`, data.villa_id)
+
+      const formdata = new FormData
+      formdata.set("OSSAccessKeyId", res.data.params.accessid)
+      formdata.set("key", res.data.file_name)
+      formdata.set("policy", res.data.params.policy)
+      formdata.set("signature", res.data.params.signature)
+      formdata.set("x:extra", res.data.params.callback_var["x:extra"])
+      formdata.set("success_action_status", 200)
+      formdata.set("name", res.data.file_name)
+      formdata.set("x-oss-content-type", res.data.params.x_oss_content_type)
+      formdata.set("callback", res.data.params.callback)
+      formdata.set("file", new File([file], res.data.file_name))
+
+      const upload = await (await fetch(res.data.params.host,
+        { method: 'POST', body: formdata })).json()
+      if (upload?.retcode == 0 && upload?.data?.url) {
+        ret.url = upload.data.url
         break
       }
-      await common.sleep(3000)
+
+      Bot.makeLog("error", ["上传图片错误", res, upload], data.self_id)
+      await Bot.sleep(3000)
     } catch (err) {
-      logger.error(err)
+      Bot.makeLog("error", ["上传图片错误", err], data.self_id)
     }
-    return file
+
+    if (!ret.url) ret.url = await this.uploadURLImage(data,
+      await Bot.fileToUrl(file, `${Date.now()}.${size.type}`))
+    return ret
   }
 
   async makeMsg(data, msg) {
@@ -154,7 +200,7 @@ const adapter = new class mysVillaAdapter {
       return Bot.sendForwardMsg(msg => this.sendMsg(data, msg), msg.data)
 
     const { object_name, msg_content } = await this.makeMsg(data, msg)
-    Bot.makeLog("info", `发送消息：[${data.villa_id}-${data.room_id}] ${object_name} ${msg_content}`, data.self_id)
+    Bot.makeLog("info", [`发送消息：[${data.villa_id}-${data.room_id}]`, object_name, msg_content], data.self_id)
     const res = await data.bot.sendApi("sendMessage", data.villa_id, {
       room_id: data.room_id,
       object_name,
@@ -167,7 +213,7 @@ const adapter = new class mysVillaAdapter {
   }
 
   recallMsg(data, message_id) {
-    Bot.makeLog("info", `撤回消息：[${data.villa_id}-${data.room_id}] ${message_id}`, data.self_id)
+    Bot.makeLog("info", [`撤回消息：[${data.villa_id}-${data.room_id}]`, message_id], data.self_id)
     let msg_uid = message_id.split("-")
     const msg_time = Number(msg_uid.shift())
     msg_uid = msg_uid.join("-")
@@ -257,34 +303,43 @@ const adapter = new class mysVillaAdapter {
     }
   }
 
-  makeMessage(data) {
-    data.event = {
-      ...data.extend_data.EventData.SendMessage,
-      ...JSON.parse(data.extend_data.EventData.SendMessage.content),
+  makeMessage(id, data) {
+    Bot.makeLog("debug", ["消息", data], data.self_id)
+    const event = {
+      ...data.extendData.sendMessage,
+      ...JSON.parse(data.extendData.sendMessage.content),
     }
+    data = {
+      bot: Bot[id],
+      self_id: id,
+      raw: data,
+      event,
 
-    data.post_type = "message"
-    data.user_id = `mv_${data.event.from_user_id}`
-    data.sender = {
-      user_id: data.user_id,
-      nickname: data.event.nickname,
-      avatar: data.event.user.portrait,
+      post_type: "message",
+      message_type: "group",
+      get user_id() { return this.sender.user_id },
+      sender: {
+        user_id: `mv_${event.fromUserId}`,
+        nickname: event.nickname,
+        avatar: event.user.portrait,
+      },
+      group_id: `mv_${event.villaId}-${event.roomId}`,
+      message_id: `${event.sendAt}-${event.msgUid}`,
+
+      message: [],
+      raw_message: "",
     }
-    data.bot.fl.set(data.user_id, { ...data.event.user, ...data.sender })
-    data.message_id = `${data.event.send_at}-${data.event.msg_uid}`
+    data.bot.fl.set(data.user_id, { ...event.user, ...data.sender })
 
-    data.message = []
-    data.raw_message = ""
-
-    if (data.event.quote?.quoted_message_id) {
-      const id = `${data.event.quote.quoted_message_send_time}-${data.event.quote.quoted_message_id}`
+    if (event.quoteMsg?.msgUid) {
+      const id = `${event.quoteMsg.sendAt}-${event.quoteMsg.msgUid}`
       data.message.push({ type: "reply", id })
       data.raw_message += `[回复：${id})]`
     }
 
     let start = 0
-    for (const i of data.event.content.entities) {
-      const text = data.event.content.text.slice(start, i.offset)
+    for (const i of event.content.entities) {
+      const text = event.content.text.slice(start, i.offset)
       if (text) {
         data.message.push({ type: "text", text })
         data.raw_message += text
@@ -314,40 +369,32 @@ const adapter = new class mysVillaAdapter {
       }
     }
 
-    const text = data.event.content.text.slice(start)
+    const text = event.content.text.slice(start)
     if (text) {
       data.message.push({ type: "text", text })
       data.raw_message += text
     }
 
-    for (const i of data.event.content.images || []) {
+    for (const i of event.content.images || []) {
       data.message.push({ type: "image", url: i.url })
       data.raw_message += `[图片：${i.url}]`
     }
 
-    data.message_type = "group"
-    data.group_id = `mv_${data.event.villa_id}-${data.event.room_id}`
     data.bot.gl.set(data.group_id, { group_id: data.group_id })
-    Bot.makeLog("info", `群消息：[${data.group_name}(${data.group_id}), ${data.sender.nickname}(${data.user_id})] ${data.raw_message}`, data.self_id)
-
+    Bot.makeLog("info", [`群消息：${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
 
-  makeWebHook(req) {
-    logger.mark(`${logger.blue(`[${req.ip} => ${req.url}]`)} HTTP ${req.method} 请求：${JSON.stringify(req.headers)}`)
-
-    const data = req.body.event
-    if (!data?.robot?.template?.id)
-      return false
-    data.self_id = `mv_${data.robot.template.id}`
-    data.bot = Bot[data.self_id]
-    data.bot.info = data.robot.template
+  makeEvent(id, data) {
+    if (!data?.robot?.template?.id) return false
+    if (!id) id = `mv_${data.robot.template.id}`
+    Bot[id].info = data.robot.template
 
     switch (data.type) {
       case 1:
         break
       case 2:
-        this.makeMessage(data)
+        this.makeMessage(id, data)
         break
       case 3:
         break
@@ -358,9 +405,150 @@ const adapter = new class mysVillaAdapter {
       case 6:
         break
       default:
-        logger.warn(`${logger.blue(`[${data.self_id}]`)} 未知消息：${logger.magenta(JSON.stringify(data))}`)
+        Bot.makeLog("warn", ["未知消息", logger.magenta(JSON.stringify(data))], data.self_id)
     }
-    req.res.json({ message: "", retcode: 0 })
+  }
+
+  wsParseMsg(data) {
+    data = new Uint8Array(data).buffer
+    const view = new DataView(data)
+    return {
+      Magic: view.getUint32(0, true),
+      dataLen: view.getUint32(4, true),
+      headerLen: view.getUint32(8, true),
+      ID: view.getBigUint64(12, true),
+      flag: view.getUint32(20, true),
+      bizType: view.getUint32(24, true),
+      appId: view.getInt32(28, true),
+      BodyData: new Uint8Array(data, 32),
+    }
+  }
+
+  wsEncodeMsg(key, data) {
+    const control = this.wsProto[key]
+    return control.encode(control.create(data)).finish()
+  }
+
+  wsDecodeMsg(key, data) {
+    const msg = this.wsLongToNumber(this.wsProto[key].decode(data))
+    Bot.makeLog("debug", ["WebSocket 消息", msg])
+    return msg
+  }
+
+  wsLongToNumber(data) {
+    if (typeof data != "object")
+      return data
+    if (Array.isArray(data)) {
+      return data.map(item => this.wsLongToNumber(item))
+    } else if (typeof data.low == "number" && typeof data.high == "number") {
+      return Number(data)
+    } else {
+      const result = {}
+      for (const key in data)
+        if (Object.prototype.hasOwnProperty.call(data, key))
+          result[key] = this.wsLongToNumber(data[key])
+      return result
+    }
+  }
+
+  wsMakeMsg(id, Flag, BizType, AppId, key, data) {
+    Bot.makeLog("debug", ["发送 WebSocket 消息", { Flag, BizType, AppId, key, data }], id)
+    const buffer = new ArrayBuffer(1024*1024+8)
+    const BodyData = this.wsEncodeMsg(key, data)
+    const view = new DataView(buffer)
+    view.setUint32(0, 0xbabeface, true)
+    view.setUint32(4, BodyData.length+24, true)
+    view.setUint32(8, 24, true)
+    view.setBigUint64(12, BigInt(Bot[id].ws_id++), true)
+    view.setUint32(20, Flag, true)
+    view.setUint32(24, BizType, true)
+    view.setInt32(28, AppId, true)
+    new Uint8Array(buffer, 32, BodyData.length+8).set(BodyData)
+    return new Uint8Array(buffer, 0, BodyData.length+32)
+  }
+
+  wsMessage(id, resolve, info, data) {
+    try {
+      data = this.wsParseMsg(data)
+    } catch (err) {
+      return Bot.makeLog("error", ["WebSocket 解码消息错误", data], id)
+    }
+    if (!data?.bizType)
+      return Bot.makeLog("error", ["WebSocket 未知消息", data], id)
+
+    switch (data.bizType) {
+      case 6:
+        data.BodyData = this.wsDecodeMsg("PHeartBeatReply", data.BodyData)
+        Bot.makeLog("debug", ["WebSocket 心跳", data.BodyData], id)
+        break
+      case 7:
+        data.BodyData = this.wsDecodeMsg("PLoginReply", data.BodyData)
+        if (data.BodyData.code) {
+          Bot.makeLog("error", ["WebSocket 登录错误", data.BodyData], id)
+        } else {
+          Bot.makeLog("info", ["WebSocket 登录成功", data.BodyData], id)
+          resolve(true)
+        }
+        break
+      case 8:
+        data.BodyData = this.wsDecodeMsg("PLogoutReply", data.BodyData)
+        if (data.BodyData.code)
+          Bot.makeLog("error", ["WebSocket 登出错误", data.BodyData], id)
+        else
+          Bot.makeLog("info", ["WebSocket 登出成功", data.BodyData], id)
+        Bot[id].ws.terminate()
+        break
+      case 52:
+        Bot.makeLog("info", "WebSocket 服务器关闭", id)
+        Bot[id].ws_reconnect = true
+        Bot[id].ws.close()
+        break
+      case 53:
+        data.BodyData = this.wsDecodeMsg("PKickOff", data.BodyData)
+        Bot.makeLog("error", ["WebSocket 强制下线", data.BodyData], id)
+        Bot[id].ws_reconnect = true
+        Bot[id].ws.close()
+        break
+      case 30001:
+        data.BodyData = this.wsDecodeMsg("RobotEvent", data.BodyData)
+        this.makeEvent(id, data.BodyData)
+        break
+      default:
+        Bot.makeLog("error", ["WebSocket 未知消息", data], id)
+    }
+  }
+
+  async wsConnect(id, resolve) {
+    const info = (await Bot[id].sendApi("getWebsocketInfo")).data
+    if (!info?.websocket_url) return
+    Bot[id].ws_id = 1
+    Bot[id].ws = new WebSocket(info.websocket_url)
+    .on("open", () => {
+      Bot[id].ws.send(this.wsMakeMsg(id, 1, 7, info.app_id, "PLogin", {
+        uid: info.uid,
+        token: `463.${Bot[id].secret_hmac}.${id.replace("mv_","")}`,
+        platform: info.platform,
+        appId: info.app_id,
+        deviceId: info.device_id,
+      }))
+      setInterval(() => Bot[id].ws.send(
+        this.wsMakeMsg(id, 1, 6, info.app_id, "PHeartBeat", {
+          clientTimestamp: `${Date.now()}`,
+        })
+      ), 20000)
+    })
+    .on("message", data => this.wsMessage(id, resolve, info, data))
+    .on("error", error => Bot.makeLog("error", ["WebSocket 错误", error], id))
+    .on("close", async code => {
+      if (Bot[id].ws_reconnect) {
+        Bot[id].ws_reconnect = false
+      } else {
+        Bot.makeLog("error", ["WebSocket 已断开", code], id)
+        await Bot.sleep(3000)
+      }
+      Bot.makeLog("info", "WebSocket 正在重连", id)
+      this.wsConnect(id, resolve)
+    })
   }
 
   async connect(token) {
@@ -372,6 +560,9 @@ const adapter = new class mysVillaAdapter {
       secret: token[1],
       pub_key: `${token[2].replace(/ /g, "\n").replace(/\nPUBLIC\n/g, " PUBLIC ")}\n`,
       sendApi: (action, villa_id, data) => this.sendApi(id, action, villa_id, data),
+
+      login: () => new Promise(resolve => this.wsConnect(id, resolve)),
+      logout: function() { return this.ws.terminate() },
 
       info: {},
       get nickname() { return this.info.name },
@@ -395,15 +586,18 @@ const adapter = new class mysVillaAdapter {
     }
     Bot[id].secret_hmac = createHmac("sha256", Bot[id].pub_key).update(Bot[id].secret).digest("hex")
 
-    logger.mark(`${logger.blue(`[${id}]`)} ${this.name}(${this.id}) 已连接`)
+    await Bot[id].login()
+    Bot.makeLog("mark", `${this.name}(${this.id}) 已连接`, id)
     Bot.em(`connect.${id}`, { self_id: id })
     return true
   }
 
   async load() {
     for (const token of config.token)
-      await adapter.connect(token)
-    Bot.express.post(`/${this.id}`, bodyParser.json(), req => this.makeWebHook(req))
+      await new Promise(resolve => {
+        adapter.connect(token).then(resolve)
+        setTimeout(resolve, 5000)
+      })
   }
 }
 
@@ -463,4 +657,4 @@ export class mysVilla extends plugin {
   }
 }
 
-logger.info(logger.green("- 米游社大别野 适配器插件 加载完成"))
+Bot.makeLog("info", logger.green("- 米游社大别野 适配器插件 加载完成"))

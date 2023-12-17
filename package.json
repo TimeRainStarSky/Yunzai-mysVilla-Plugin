@@ -3,6 +3,7 @@
   "type": "module",
   "author": "TimeRainStarSky",
   "dependencies": {
-    "body-parser": "^1.20.2"
+    "body-parser": "^1.20.2",
+    "protobufjs": "^7.2.5"
   }
 }

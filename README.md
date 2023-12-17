@@ -19,15 +19,11 @@ TRSS-Yunzai 米游社大别野 Bot 适配器 插件
 2. 输入：`#安装mysVilla-Plugin`
 3. 打开：[米游社大别野 开放平台](https://open.miyoushe.com) 创建 Bot：  
 ① 立即创建  
-② 开发配置 → 得到：`bot_id:secret:pub_key(换行改为空格)`  
+② 开发配置 → 回调方式 选择 `WebSocket` → 配置 全选 `是`  
+③ 开发配置 → 得到 `bot_id:secret:pub_key(换行改为空格)`  
 4. 输入：`#米游社大别野设置bot_id:secret:pub_key`
-5. 公网地址填入 `config/config/bot.yaml:url`
-6. 开放平台回调地址填写：`url/mysVilla`
 
 ## 使用教程
 
 - #米游社大别野账号
 - #米游社大别野设置 + `bot_id:secret:pub_key`
-
-- 注意：
-1. 需要公网地址，使用浏览器打开 url，后台日志应显示访问请求
