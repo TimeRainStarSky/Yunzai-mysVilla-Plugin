@@ -13,6 +13,7 @@ const adapter = new class mysVillaAdapter {
   constructor() {
     this.id = "mysVilla"
     this.name = "米游社大别野Bot"
+    this.path = "data/mysVilla/"
 
     this.wsProto = {}
     this.wsProtoFile = {
@@ -195,6 +196,8 @@ const adapter = new class mysVillaAdapter {
           msg_content.content.images.push(await this.uploadImage(data, i.file))
           break
         case "reply": {
+          if (data.bot.botMsgId[i.id])
+            i.id = data.bot.botMsgId[i.id]
           let msg_uid = i.id.split("-")
           const msg_time = Number(msg_uid.shift())
           msg_uid = msg_uid.join("-")
@@ -292,12 +295,12 @@ const adapter = new class mysVillaAdapter {
   }
 
   async getMemberInfo(data) {
-    const i = (await data.bot.sendApi(`getMember?uid=${data.user_id}`, data.villa_id)).data.member
+    const raw = (await data.bot.sendApi(`getMember?uid=${data.user_id}`, data.villa_id)).data.member
     return {
-      ...i,
-      user_id: `mv_${i.basic.uid}`,
-      nickname: i.basic.nickname,
-      avatar: i.basic.avatar_url,
+      raw,
+      user_id: `mv_${raw.basic.uid}`,
+      nickname: raw.basic.nickname,
+      avatar: raw.basic.avatar_url,
     }
   }
 
@@ -375,7 +378,6 @@ const adapter = new class mysVillaAdapter {
   }
 
   makeMessage(id, data) {
-    Bot.makeLog("debug", ["消息", data], data.self_id)
     const event = {
       ...data.extendData.sendMessage,
       ...JSON.parse(data.extendData.sendMessage.content),
@@ -457,12 +459,17 @@ const adapter = new class mysVillaAdapter {
     }
 
     data.bot.gl.set(data.group_id, { group_id: data.group_id })
+    let gml = data.bot.gml.get(data.group_id)
+    if (!gml) {
+      gml = new Map
+      data.bot.gml.set(data.group_id, gml)
+    }
+    gml.set(data.user_id, { ...event.user, ...data.sender })
     Bot.makeLog("info", [`群消息：${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
 
   makeClickMsg(id, data) {
-    Bot.makeLog("debug", ["点击消息组件回调", data], data.self_id)
     const event = data.extendData.clickMsgComponent
     data = {
       bot: Bot[id],
@@ -662,6 +669,18 @@ const adapter = new class mysVillaAdapter {
     })
   }
 
+  getFriendMap(id) {
+    return Bot.getMap(`${this.path}${id}/Friend`)
+  }
+
+  getGroupMap(id) {
+    return Bot.getMap(`${this.path}${id}/Group`)
+  }
+
+  getMemberMap(id) {
+    return Bot.getMap(`${this.path}${id}/Member`)
+  }
+
   async connect(token) {
     token = token.split(":")
     const id = `mv_${token[0]}`
@@ -687,15 +706,16 @@ const adapter = new class mysVillaAdapter {
 
       pickUser: user_id => this.pickFriend(id, user_id),
       pickFriend: user_id => this.pickFriend(id, user_id),
+      getFriendMap() { return this.fl },
+      fl: this.getFriendMap(id),
 
       pickMember: (group_id, user_id) => this.pickMember(id, group_id, user_id),
       pickGroup: group_id => this.pickGroup(id, group_id),
+      getGroupMap() { return this.gl },
+      gl: this.getGroupMap(id),
+      gml: this.getMemberMap(id),
 
       botMsgId: {},
-
-      fl: new Map,
-      gl: new Map,
-      gml: new Map,
     }
     Bot[id].secret_hmac = createHmac("sha256", Bot[id].pub_key).update(Bot[id].secret).digest("hex")
 
