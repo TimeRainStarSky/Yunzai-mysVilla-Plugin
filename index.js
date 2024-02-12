@@ -1,6 +1,6 @@
 Bot.makeLog("info", logger.yellow("- 正在加载 米游社大别野 适配器插件"))
 
-import { config, configSave } from "./Model/config.js"
+import makeConfig from "../../lib/plugins/config.js"
 import fetch, { FormData, File } from "node-fetch"
 import imageSize from "image-size"
 import bodyParser from "body-parser"
@@ -8,6 +8,18 @@ import { createHmac, randomUUID } from "node:crypto"
 import WebSocket from "ws"
 import protobuf from "protobufjs"
 import md5 from "md5"
+
+const { config, configSave } = await makeConfig("mysVilla", {
+  tips: "",
+  permission: "master",
+  badge: {},
+  token: [],
+}, {
+  tips: [
+    "欢迎使用 TRSS-Yunzai mysVilla Plugin ! 作者：时雨🌌星空",
+    "参考：https://github.com/TimeRainStarSky/Yunzai-mysVilla-Plugin",
+  ],
+})
 
 const adapter = new class mysVillaAdapter {
   constructor() {
@@ -377,7 +389,7 @@ const adapter = new class mysVillaAdapter {
     }
   }
 
-  makeMessage(id, data) {
+  async makeMessage(id, data) {
     const event = {
       ...data.extendData.sendMessage,
       ...JSON.parse(data.extendData.sendMessage.content),
@@ -403,7 +415,7 @@ const adapter = new class mysVillaAdapter {
       message: [],
       raw_message: "",
     }
-    data.bot.fl.set(data.user_id, { ...event.user, ...data.sender })
+    await data.bot.fl.set(data.user_id, { ...event.user, ...data.sender })
 
     if (event.quoteMsg?.msgUid) {
       let msg_id = `${event.quoteMsg.sendAt}-${event.quoteMsg.msgUid}`
@@ -458,13 +470,13 @@ const adapter = new class mysVillaAdapter {
       data.raw_message += `[图片：${i.url}]`
     }
 
-    data.bot.gl.set(data.group_id, { group_id: data.group_id })
+    await data.bot.gl.set(data.group_id, { group_id: data.group_id })
     let gml = data.bot.gml.get(data.group_id)
     if (!gml) {
       gml = new Map
-      data.bot.gml.set(data.group_id, gml)
+      await data.bot.gml.set(data.group_id, gml)
     }
-    gml.set(data.user_id, { ...event.user, ...data.sender })
+    await gml.set(data.user_id, { ...event.user, ...data.sender })
     Bot.makeLog("info", [`群消息：${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
@@ -496,7 +508,7 @@ const adapter = new class mysVillaAdapter {
     }
     Bot[id].botMsgId[event.botMsgId] = data.message_id
 
-    Bot.makeLog("info", [`点击消息组件回调：${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
+    Bot.makeLog("info", [`点击消息组件回调：[${data.group_id}, ${data.sender.nickname}(${data.user_id})]`, data.raw_message], data.self_id)
     Bot.em(`${data.post_type}.${data.message_type}`, data)
   }
 
@@ -707,13 +719,13 @@ const adapter = new class mysVillaAdapter {
       pickUser: user_id => this.pickFriend(id, user_id),
       pickFriend: user_id => this.pickFriend(id, user_id),
       getFriendMap() { return this.fl },
-      fl: this.getFriendMap(id),
+      fl: await this.getFriendMap(id),
 
       pickMember: (group_id, user_id) => this.pickMember(id, group_id, user_id),
       pickGroup: group_id => this.pickGroup(id, group_id),
       getGroupMap() { return this.gl },
-      gl: this.getGroupMap(id),
-      gml: this.getMemberMap(id),
+      gl: await this.getGroupMap(id),
+      gml: await this.getMemberMap(id),
 
       botMsgId: {},
     }
@@ -780,12 +792,12 @@ export class mysVilla extends plugin {
         return false
       }
     }
-    configSave(config)
+    await configSave(config)
   }
 
-  CallBackUrl() {
+  async CallBackUrl() {
     config.url = this.e.msg.replace(/^#(米游社大别野|mysVilla)回调/, "").trim()
-    configSave(config)
+    await configSave(config)
     this.reply("回调已设置，重启后生效", true)
   }
 }
