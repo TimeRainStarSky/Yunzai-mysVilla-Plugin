@@ -3,7 +3,6 @@ Bot.makeLog("info", logger.yellow("- 正在加载 米游社大别野 适配器�
 import makeConfig from "../../lib/plugins/config.js"
 import fetch, { FormData, File } from "node-fetch"
 import imageSize from "image-size"
-import bodyParser from "body-parser"
 import { createHmac, randomUUID } from "node:crypto"
 import WebSocket from "ws"
 import protobuf from "protobufjs"
